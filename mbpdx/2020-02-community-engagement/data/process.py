@@ -18,13 +18,20 @@ USE_FREQ_DTYPE = pandas.CategoricalDtype([
 
 ISP_DTYPE = pandas.CategoricalDtype([
     'Comcast',
-    'CenturyLink (fiber)',
-    'CenturyLink (DSL)',
-    'Frontier (fiber)',
-    'Frontier (DSL)',
+    'CenturyLink',
+    'Frontier',
     'A fixed wireless provider (microwave)',
     'Another fiber provider',
     'A dial-up provider',
+    'Other',
+])
+
+ISP_TECH_DTYPE = pandas.CategoricalDtype([
+    'Cable',
+    'Fiber',
+    'DSL',
+    'Fixed wireless',
+    'Dial-up',
     'Other',
 ])
 
@@ -95,7 +102,11 @@ def map_online_dispute_resolvers(cell):
 
 
 def map_filter_na(fn, df, col):
-    df.loc[lambda df: ~pandas.isna(df[col]), col] = fn(df[~pandas.isna(df[col])][col])
+    return fn(df[~pandas.isna(df[col])][col])
+
+
+def map_filter_na_inplace(fn, df, col):
+    df.loc[lambda df: ~pandas.isna(df[col]), col] = map_filter_na(fn, df, col)
 
 
 def combined():
@@ -108,7 +119,7 @@ def combined():
     online.rename(columns={
         "Do you use the Internet?": 'internet_use_freq',
         "Do you have Internet in your home/business?": 'has_internet_premise',
-        "Who provides your home/business Internet service?": 'isp',
+        "Who provides your home/business Internet service?": 'isp_raw',
         "About how much is your monthly Internet service in your home/business (excluding mobile plans)?": 'internet_price',
         "Do you ONLY have Internet access through a mobile data plan?": 'has_internet_mobile_only',
         "About how much is the price per month for your family's mobile service?": 'mobile_price',
@@ -149,8 +160,8 @@ def combined():
         online[col] = online[col].str.split(pat=';')
 
     # Map dislikes and dispute resolvers onto our dtypes.
-    map_filter_na(lambda s: s.apply(map_online_dislikes), online, 'dislikes')
-    map_filter_na(lambda s: s.apply(map_online_dispute_resolvers), online, 'dispute_resolvers')
+    map_filter_na_inplace(lambda s: s.apply(map_online_dislikes), online, 'dislikes')
+    map_filter_na_inplace(lambda s: s.apply(map_online_dispute_resolvers), online, 'dispute_resolvers')
 
     in_person = pandas.read_csv(os.path.join(HERE, 'raw-in-person.csv'))
     in_person.drop(columns=[
@@ -161,7 +172,7 @@ def combined():
         "How often do you use the internet?": 'internet_use_freq',
         "Do you only have internet access through the generosity of someone who is not in your household, such as free Wi-Fi, a neighbor, your workplace, or the library?": 'has_internet_ext_only',
         "Excluding mobile plans, do you have internet access at home?": 'has_internet_premise',
-        "Who provides your home internet service?": 'isp',
+        "Who provides your home internet service?": 'isp_raw',
         "Excluding mobile plans, about how much is the price per month of your home internet service?": 'internet_price',
         "Do you have internet access through a mobile plan?": 'has_internet_mobile',
         "If you marked Yes, about how much is the price per month of your household's mobile plan?": 'mobile_price',
@@ -211,19 +222,33 @@ def combined():
     for col in ['internet_price', 'mobile_price']:
         data[col] = pandas.to_numeric(data[col].str.extract(r'(?:^|\$)(\d+(?:\.\d+)?)(?:$|\b)', expand=False))
 
+    # Map ISP information.
+    data['isp'] = map_filter_na(lambda s: s.replace({
+        'CenturyLink (fiber)': 'CenturyLink',
+        'CenturyLink (DSL)': 'CenturyLink',
+        'Frontier (fiber)': 'Frontier',
+        'Frontier (DSL)': 'Frontier',
+    }).astype(ISP_DTYPE).fillna('Other'), data, 'isp_raw')
+    data['isp_tech'] = map_filter_na(lambda s: s.replace({
+        'Comcast': 'Cable',
+        'CenturyLink (fiber)': 'Fiber',
+        'CenturyLink (DSL)': 'DSL',
+        'Frontier (fiber)': 'Fiber',
+        'Frontier (DSL)': 'DSL',
+        'A fixed wireless provider (microwave)': 'Fixed wireless',
+        'Another fiber provider': 'Fiber',
+        'A dial-up provider': 'Dial-up',
+    }).astype(ISP_TECH_DTYPE).fillna('Other'), data, 'isp_raw')
+    data.drop(columns=['isp_raw'], inplace=True)
+
     # Map unordered categories, ignoring NaN.
     mappers = {
         'internet_use_freq': lambda s: s.astype(USE_FREQ_DTYPE),
-        'isp': lambda s: s.astype(ISP_DTYPE).fillna('Other'),
         'dislikes': lambda s: s.apply(partial(categorize_list, DISLIKE_DTYPE)),
         'dispute_resolvers': lambda s: s.apply(partial(categorize_list, DISPUTE_RESOLVER_DTYPE)),
     }
     for col, mapper in mappers.items():
-        map_filter_na(mapper, data, col)
-
-    # ISP is still an object type here because of its NaN values, so let's go
-    # ahead and coerce it to the categorical type.
-    data['isp'] = data['isp'].astype(ISP_DTYPE)
+        map_filter_na_inplace(mapper, data, col)
 
     # Map ordered categories.
     for col in ['importance_student', 'importance_low_income']:
