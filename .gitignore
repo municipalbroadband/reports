@@ -1,0 +1,5 @@
+/.tox/*
+/dev/*
+__pycache__/
+
+!.keep
