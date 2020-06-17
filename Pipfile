@@ -12,6 +12,7 @@ pandas = "*"
 tox = "*"
 matplotlib = "*"
 scipy = "*"
+palettable = "*"
 
 [requires]
 python_version = "3.7"
